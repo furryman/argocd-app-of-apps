@@ -1,0 +1,17 @@
+spec:
+  destination:
+    server: https://kubernetes.default.svc
+  source:
+    repoURL: https://github.com/furryman/eks-helm-charts.git
+    targetRevision: HEAD
+
+apps:
+  certManager:
+    enabled: true
+    namespace: cert-manager
+  ingressNginx:
+    enabled: true
+    namespace: ingress-nginx
+  fuhrimanWebsite:
+    enabled: true
+    namespace: default
