@@ -33,9 +33,20 @@ All applications have automated sync enabled:
 - `prune: true` - Removes resources deleted from Git
 - `selfHeal: true` - Reverts manual cluster changes
 
+## Deployment Details
+
+ArgoCD itself is installed on the k3s cluster via cloud-init during EC2 instance launch. The bootstrap process:
+
+1. k3s is installed on the EC2 instance (single-node Kubernetes)
+2. ArgoCD is deployed via the official Helm chart (argo/argo-cd)
+3. The argocd-apps Helm chart creates this App-of-Apps as the root Application
+4. ArgoCD then syncs and deploys all child applications from this repository
+
+See the [terraform repository](https://github.com/furryman/terraform) for the complete infrastructure code.
+
 ## Usage
 
-This chart is automatically deployed by Terraform via the helm-argocd module. The parent Application is created pointing to this repository.
+This chart is automatically deployed by Terraform during k3s cluster initialization. The parent Application is created via the argocd-apps Helm chart in the EC2 instance's cloud-init user_data script, pointing to this repository.
 
 ## Manual Deployment
 
