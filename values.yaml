@@ -9,9 +9,6 @@ apps:
   certManager:
     enabled: true
     namespace: cert-manager
-  ingressNginx:
-    enabled: true
-    namespace: ingress-nginx
   envoyGateway:
     enabled: true
     namespace: envoy-gateway-system
