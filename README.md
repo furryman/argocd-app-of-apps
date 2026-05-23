@@ -1,56 +1,77 @@
 # ArgoCD App of Apps
 
-This repository contains the parent ArgoCD Application that manages all child applications for the fuhriman.org infrastructure.
+This repository contains the parent ArgoCD `Application` that declares the cluster workloads for fuhriman.org. ArgoCD installs the app-of-apps chart at first boot (via cloud-init / user_data), then reconciles each child Application continuously.
 
 ## Architecture
 
+```text
+                      ┌─────────────────────┐
+                      │  ArgoCD App of Apps │   (this repo, helm chart)
+                      └─────────────────────┘
+                                  │
+       ┌────────────────┬─────────┴────────┬─────────────────┐
+       ▼                ▼                  ▼                 ▼
+┌──────────────┐ ┌──────────────┐ ┌────────────────┐ ┌────────────────┐
+│ cert-manager │ │envoy-gateway │ │  external-dns  │ │fuhriman-website│
+│ (sync -2)    │ │ (sync -1)    │ │  (sync 0)      │ │  (sync 0)      │
+└──────────────┘ └──────────────┘ └────────────────┘ └────────────────┘
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    ArgoCD App of Apps                        │
-│                     (This Repository)                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┼───────────────┐
-              │               │               │
-              ▼               ▼               ▼
-    ┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
-    │  cert-manager   │ │ingress-nginx│ │fuhriman-website │
-    │  (sync-wave:-2) │ │(sync-wave:-1)│ │  (sync-wave:0)  │
-    └─────────────────┘ └─────────────┘ └─────────────────┘
-```
+
+All charts source from the [`eks-helm-charts`](https://github.com/furryman/eks-helm-charts) repo.
 
 ## Sync Waves
 
-Applications are deployed in order using ArgoCD sync waves:
+Applications deploy in order using ArgoCD's `sync-wave` annotation:
 
-1. **cert-manager** (wave -2): Installs first to provide TLS certificates
-2. **ingress-nginx** (wave -1): Installs second to provide ingress controller
-3. **fuhriman-website** (wave 0): Installs last with working ingress and TLS
+1. **cert-manager** (wave `-2`): TLS certificate issuance via Let's Encrypt + Gateway API solver. Must be ready before the Gateway needs a cert.
+2. **envoy-gateway** (wave `-1`): Gateway API control + data plane. Also bundles the shared `public` Gateway resource, the multi-SAN `Certificate`, and the `argocd-server` HTTPRoute.
+3. **external-dns** (wave `0`): publishes Route53 records from HTTPRoute hostnames.
+4. **fuhriman-website** (wave `0`): the Next.js portfolio + its HTTPRoute attaching to the `public` Gateway.
 
 ## Auto-Sync
 
-All applications have automated sync enabled:
-- `prune: true` - Removes resources deleted from Git
-- `selfHeal: true` - Reverts manual cluster changes
+All Applications have automated sync enabled:
+
+- `prune: true` — removes resources deleted from git
+- `selfHeal: true` — reverts manual cluster changes back to declared state
 
 ## Deployment Details
 
-ArgoCD itself is installed on the k3s cluster via cloud-init during EC2 instance launch. The bootstrap process:
+ArgoCD itself is installed on the k3s cluster via cloud-init during EC2 instance launch. The bootstrap:
 
-1. k3s is installed on the EC2 instance (single-node Kubernetes)
-2. ArgoCD is deployed via the official Helm chart (argo/argo-cd)
-3. The argocd-apps Helm chart creates this App-of-Apps as the root Application
-4. ArgoCD then syncs and deploys all child applications from this repository
+1. k3s starts on a Packer-baked AMI (~30 sec) — see [`furryman/terraform/packer`](https://github.com/furryman/terraform/tree/main/packer)
+2. `user_data.sh` (~25 lines, runtime-only) installs ArgoCD chart 9.5.15 via Helm with `configs.params.server.insecure=true` (TLS terminates at the Gateway, not the server).
+3. user_data installs the `argocd-apps` chart pointing at this repo → ArgoCD's app-of-apps Application is created.
+4. ArgoCD reads this repo's `templates/` → spawns the four child Applications.
+5. Child Applications sync charts from `eks-helm-charts`. End-to-end convergence: ~3 minutes.
 
-See the [terraform repository](https://github.com/furryman/terraform) for the complete infrastructure code.
+See [the terraform repository](https://github.com/furryman/terraform) for the AWS-side infrastructure.
 
-## Usage
+## Configuration
 
-This chart is automatically deployed by Terraform during k3s cluster initialization. The parent Application is created via the argocd-apps Helm chart in the EC2 instance's cloud-init user_data script, pointing to this repository.
+`values.yaml` drives which apps deploy and into which namespaces:
 
-## Manual Deployment
+```yaml
+apps:
+  certManager:
+    enabled: true
+    namespace: cert-manager
+  envoyGateway:
+    enabled: true
+    namespace: envoy-gateway-system
+  externalDns:
+    enabled: true
+    namespace: external-dns
+  fuhrimanWebsite:
+    enabled: true
+    namespace: default
+```
 
-If needed, you can manually create the root Application:
+The `templates/` directory has one Application manifest per app, gated by these flags.
+
+## Manual Deployment (recovery)
+
+If ArgoCD is broken and you need to bootstrap by hand:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -71,21 +92,4 @@ spec:
     automated:
       prune: true
       selfHeal: true
-```
-
-## Configuration
-
-Edit `values.yaml` to enable/disable applications or change namespaces:
-
-```yaml
-apps:
-  certManager:
-    enabled: true
-    namespace: cert-manager
-  ingressNginx:
-    enabled: true
-    namespace: ingress-nginx
-  fuhrimanWebsite:
-    enabled: true
-    namespace: default
 ```
