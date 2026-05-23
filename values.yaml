@@ -12,9 +12,6 @@ apps:
   ingressNginx:
     enabled: true
     namespace: ingress-nginx
-  envoyGateway:
-    enabled: true
-    namespace: envoy-gateway-system
   externalDns:
     enabled: true
     namespace: external-dns
